@@ -1,100 +1,116 @@
-export const extractRootUrl = (url: string): string => {
-  try {
-    const urlObj = new URL(url)
-    return `${urlObj.protocol}//${urlObj.hostname}`
-  } catch {
-    return url
+export interface ExtractedUrl {
+  root: string
+  count: number
+  originalUrls: string[]
+  ipAddress?: string
+  ipError?: string
+  isResolvingIp?: boolean
+  thirdPartyUrls?: Array<{
+    url: string
+    ipAddress?: string
+    ipError?: string
+    isResolvingIp?: boolean
+  }>
+  crawlStatus?: "pending" | "success" | "cors-blocked" | "error"
+  crawlError?: string
+  isCrawling?: boolean
+  redirectInfo?: {
+    finalUrl: string
+    redirectChain: Array<{
+      url: string
+      statusCode: number
+    }>
+    redirectCount: number
   }
+  isCheckingRedirect?: boolean
 }
 
-export const extractUrlsFromText = (text: string) => {
-  const urlRegex = /https?:\/\/[^\s<>"{}|\\^`[\]]+/gi
+export const extractUrlsFromText = (text: string): ExtractedUrl[] => {
+  // Enhanced regex to match URLs more accurately
+  const urlRegex = /https?:\/\/(?:[-\w.])+(?::[0-9]+)?(?:\/(?:[\w/_.])*(?:\?(?:[\w&=%.])*)?(?:#(?:[\w.])*)?)?/gi
   const matches = text.match(urlRegex) || []
 
-  const urlMap = new Map<string, string>()
+  console.log(`Found ${matches.length} URL matches in text`)
+
+  // Group URLs by root domain
+  const urlGroups: { [key: string]: string[] } = {}
 
   matches.forEach((url) => {
-    const cleanUrl = url.replace(/[.,;:!?)]$/, "") // Remove trailing punctuation
-    const rootUrl = extractRootUrl(cleanUrl)
-    if (!urlMap.has(rootUrl)) {
-      urlMap.set(rootUrl, cleanUrl)
+    try {
+      const urlObj = new URL(url)
+      const root = `${urlObj.protocol}//${urlObj.hostname}`
+
+      if (!urlGroups[root]) {
+        urlGroups[root] = []
+      }
+      urlGroups[root].push(url)
+    } catch (error) {
+      console.warn("Invalid URL found:", url)
     }
   })
 
-  return Array.from(urlMap.entries()).map(([root, original]) => ({
-    original,
+  // Convert to ExtractedUrl format
+  const extractedUrls: ExtractedUrl[] = Object.entries(urlGroups).map(([root, urls]) => ({
     root,
+    count: urls.length,
+    originalUrls: [...new Set(urls)], // Remove duplicates
   }))
+
+  console.log(`Extracted ${extractedUrls.length} unique root URLs`)
+
+  return extractedUrls
 }
 
 export const extractUrlsFromHtml = (html: string, baseUrl: string): string[] => {
-  const parser = new DOMParser()
-  const doc = parser.parseFromString(html, "text/html")
-  const urls = new Set<string>()
-  const baseDomain = new URL(baseUrl).hostname
+  const urls: string[] = []
+  const baseUrlObj = new URL(baseUrl)
 
-  // Extract URLs from various HTML elements
-  const selectors = [
-    "a[href]",
-    "link[href]",
-    "script[src]",
-    "img[src]",
-    "iframe[src]",
-    "embed[src]",
-    "object[data]",
-    "source[src]",
-    "track[src]",
-    "area[href]",
-    "base[href]",
-    "form[action]",
+  // Extract URLs from various HTML attributes
+  const patterns = [
+    // href attributes
+    /href\s*=\s*["']([^"']+)["']/gi,
+    // src attributes
+    /src\s*=\s*["']([^"']+)["']/gi,
+    // action attributes
+    /action\s*=\s*["']([^"']+)["']/gi,
+    // content attributes (for meta redirects, etc.)
+    /content\s*=\s*["'][^"']*url\s*=\s*([^"'\s]+)[^"']*["']/gi,
+    // Plain URLs in text content
+    /https?:\/\/(?:[-\w.])+(?::[0-9]+)?(?:\/(?:[\w/_.])*(?:\?(?:[\w&=%.])*)?(?:#(?:[\w.])*)?)?/gi,
   ]
 
-  selectors.forEach((selector) => {
-    const elements = doc.querySelectorAll(selector)
-    elements.forEach((element) => {
-      const url =
-        element.getAttribute("href") ||
-        element.getAttribute("src") ||
-        element.getAttribute("data") ||
-        element.getAttribute("action")
+  patterns.forEach((pattern) => {
+    let match
+    while ((match = pattern.exec(html)) !== null) {
+      let url = match[1] || match[0]
 
-      if (url) {
-        try {
-          const absoluteUrl = new URL(url, baseUrl)
-          const domain = absoluteUrl.hostname
-
-          // Only include third-party domains (different from base domain)
-          if (domain !== baseDomain && !domain.endsWith(`.${baseDomain}`) && !baseDomain.endsWith(`.${domain}`)) {
-            const rootUrl = `${absoluteUrl.protocol}//${domain}`
-            urls.add(rootUrl)
-          }
-        } catch (error) {
-          // Invalid URL, skip
+      try {
+        // Handle relative URLs
+        if (url.startsWith("//")) {
+          url = baseUrlObj.protocol + url
+        } else if (url.startsWith("/")) {
+          url = `${baseUrlObj.protocol}//${baseUrlObj.hostname}${url}`
+        } else if (!url.startsWith("http")) {
+          // Skip non-HTTP URLs (mailto:, javascript:, etc.)
+          continue
         }
+
+        const urlObj = new URL(url)
+
+        // Only include external URLs (different domain)
+        if (urlObj.hostname !== baseUrlObj.hostname) {
+          const rootUrl = `${urlObj.protocol}//${urlObj.hostname}`
+          if (!urls.includes(rootUrl)) {
+            urls.push(rootUrl)
+          }
+        }
+      } catch (error) {
+        // Skip invalid URLs
+        continue
       }
-    })
-  })
-
-  // Also extract URLs from inline styles and script content
-  const styleElements = doc.querySelectorAll("style")
-  styleElements.forEach((style) => {
-    const cssText = style.textContent || ""
-    const urlMatches = cssText.match(/url$$['"]?([^'")\s]+)['"]?$$/g)
-    if (urlMatches) {
-      urlMatches.forEach((match) => {
-        const url = match.replace(/url$$['"]?([^'")\s]+)['"]?$$/, "$1")
-        try {
-          const absoluteUrl = new URL(url, baseUrl)
-          const domain = absoluteUrl.hostname
-          if (domain !== baseDomain) {
-            urls.add(`${absoluteUrl.protocol}//${domain}`)
-          }
-        } catch (error) {
-          // Invalid URL, skip
-        }
-      })
     }
   })
 
-  return Array.from(urls)
+  console.log(`Extracted ${urls.length} third-party URLs from HTML`)
+  return urls
 }

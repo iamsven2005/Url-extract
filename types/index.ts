@@ -1,40 +1,30 @@
 export interface ExtractedUrl {
-  original: string
   root: string
+  count: number
+  originalUrls: string[]
   ipAddress?: string
-  isResolvingIp?: boolean
   ipError?: string
-  isCrawling?: boolean
-  crawlError?: string
+  isResolvingIp?: boolean
   thirdPartyUrls?: ThirdPartyUrl[]
-  crawlStatus?: "pending" | "success" | "error" | "cors-blocked"
+  crawlStatus?: "pending" | "success" | "cors-blocked" | "error"
+  crawlError?: string
+  isCrawling?: boolean
   redirectInfo?: RedirectInfo
   isCheckingRedirect?: boolean
-}
-
-export interface RedirectInfo {
-  finalUrl: string
-  redirectChain: string[]
-  finalIpAddress?: string
-  isResolvingFinalIp?: boolean
-  finalIpError?: string
-  statusCode?: number
 }
 
 export interface ThirdPartyUrl {
   url: string
   ipAddress?: string
-  isResolvingIp?: boolean
   ipError?: string
-  redirectInfo?: RedirectInfo
-  isCheckingRedirect?: boolean
+  isResolvingIp?: boolean
 }
 
-export interface ExportData {
-  type: "primary" | "third-party"
-  url: string
-  ipAddress?: string
-  parentUrl?: string
-  finalUrl?: string
-  finalIpAddress?: string
+export interface RedirectInfo {
+  finalUrl: string
+  redirectChain: Array<{
+    url: string
+    statusCode: number
+  }>
+  redirectCount: number
 }

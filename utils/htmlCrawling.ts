@@ -15,28 +15,44 @@ export const crawlPage = async (
   const urlToCrawl = finalUrl || url
 
   try {
-    const controller = new AbortController()
-    const timeoutId = setTimeout(() => controller.abort(), 15000) // 15 second timeout
+    console.log("Crawling page:", urlToCrawl)
 
-    const response = await fetch(urlToCrawl, {
-      mode: "cors",
-      signal: controller.signal,
+    const response = await fetch("/api/crawl", {
+      method: "POST",
       headers: {
-        "User-Agent": "Mozilla/5.0 (compatible; URLExtractor/1.0)",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Content-Type": "application/json",
       },
+      body: JSON.stringify({ url: urlToCrawl }),
     })
 
-    clearTimeout(timeoutId)
+    const data = await response.json()
 
     if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
+      console.error("Crawl API error:", data)
+      return {
+        success: false,
+        error: data.error || `HTTP ${response.status}`,
+        status: "error",
+        crawledUrl: urlToCrawl,
+      }
     }
 
-    const html = await response.text()
-    const thirdPartyUrlStrings = extractUrlsFromHtml(html, urlToCrawl)
+    if (!data.success || !data.html) {
+      return {
+        success: false,
+        error: data.error || "No HTML content received",
+        status: "error",
+        crawledUrl: urlToCrawl,
+      }
+    }
 
+    console.log(`Successfully received HTML content (${data.contentLength} chars) for:`, urlToCrawl)
+
+    // Extract third-party URLs from the HTML
+    const thirdPartyUrlStrings = extractUrlsFromHtml(data.html, urlToCrawl)
     const thirdPartyUrls: ThirdPartyUrl[] = thirdPartyUrlStrings.map((url) => ({ url }))
+
+    console.log(`Found ${thirdPartyUrls.length} third-party URLs in:`, urlToCrawl)
 
     return {
       success: true,
@@ -45,29 +61,14 @@ export const crawlPage = async (
       crawledUrl: urlToCrawl,
     }
   } catch (error) {
+    console.error("Crawling error for", urlToCrawl, ":", error)
     const errorMessage = error instanceof Error ? error.message : "Unknown error"
 
-    if (error instanceof Error && error.name === "AbortError") {
-      return {
-        success: false,
-        error: "Request timeout",
-        status: "error",
-        crawledUrl: urlToCrawl,
-      }
-    } else if (errorMessage.includes("CORS") || errorMessage.includes("cors")) {
-      return {
-        success: false,
-        error: "CORS policy blocks access",
-        status: "cors-blocked",
-        crawledUrl: urlToCrawl,
-      }
-    } else {
-      return {
-        success: false,
-        error: errorMessage,
-        status: "error",
-        crawledUrl: urlToCrawl,
-      }
+    return {
+      success: false,
+      error: errorMessage,
+      status: "error",
+      crawledUrl: urlToCrawl,
     }
   }
 }
